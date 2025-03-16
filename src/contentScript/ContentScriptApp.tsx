@@ -1,18 +1,137 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 // Use the Deconstructor component directly instead of DeconstructorPopup
 import Deconstructor from "@/components/Deconstructor";
+import { atom, useAtom } from "jotai";
+
+// Need to import this to access the atom from Deconstructor component
+const isLoadingAtom = atom(false);
+// Create an error atom to communicate errors from Deconstructor
+const errorAtom = atom<string | null>(null);
 
 interface ApiKeys {
   openAIKey: string;
 }
+
+// CSS to inject for consistent styling across all websites
+const injectGlobalStyles = () => {
+  const styleId = "deconstructor-global-styles";
+
+  // Only inject once
+  if (document.getElementById(styleId)) return;
+
+  const style = document.createElement("style");
+  style.id = styleId;
+  style.textContent = `
+    #deconstructor-root * {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      box-sizing: border-box;
+      line-height: 1.5;
+    }
+    
+    #deconstructor-popup * {
+      transition: all 0.2s ease;
+    }
+
+    /* Set a smaller initial font size for better spacing */
+    #deconstructor-popup .react-flow {
+      font-size: 85%;
+    }
+  `;
+
+  document.head.appendChild(style);
+};
 
 const ContentScriptApp: React.FC = () => {
   console.log("### INIT: Content script initializing");
   const [isIconVisible, setIsIconVisible] = useState(false);
   const [isPopupVisible, setIsPopupVisible] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
   const [selectedWord, setSelectedWord] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [isLoading] = useAtom(isLoadingAtom); // Use the same atom as Deconstructor
+  const [apiError, setApiError] = useAtom(errorAtom); // Use atom for API errors
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const popupRef = useRef<HTMLDivElement>(null);
+  const selectedTextRef = useRef<DOMRect | null>(null);
+
+  // Inject global styles once on mount
+  useEffect(() => {
+    injectGlobalStyles();
+  }, []);
+
+  // Cleanup function to reset all UI state
+  const cleanupState = () => {
+    setIsDragging(false);
+    setLocalError(null);
+    setApiError(null);
+  };
+
+  // Handle clicks outside the popup
+  useEffect(() => {
+    if (!isPopupVisible) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        popupRef.current &&
+        !popupRef.current.contains(event.target as Node)
+      ) {
+        console.log("### POPUP: Clicked outside, closing");
+        setIsPopupVisible(false);
+        cleanupState();
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isPopupVisible]);
+
+  // Handle drag functionality
+  useEffect(() => {
+    if (!isPopupVisible || !isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      setPopupPosition({
+        x: e.clientX - dragOffset.x,
+        y: e.clientY - dragOffset.y,
+      });
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isPopupVisible, isDragging, dragOffset]);
+
+  // Start dragging
+  const handleDragStart = (e: React.MouseEvent) => {
+    if (!popupRef.current) return;
+
+    // Only start dragging from the header area
+    const target = e.target as HTMLElement;
+    if (!target.closest(".popup-drag-handle")) return;
+
+    e.preventDefault();
+
+    const rect = popupRef.current.getBoundingClientRect();
+    setDragOffset({
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    });
+
+    setIsDragging(true);
+  };
 
   // Load API key
   useEffect(() => {
@@ -36,8 +155,22 @@ const ContentScriptApp: React.FC = () => {
     };
   }, []);
 
+  // Validate API key
+  useEffect(() => {
+    if (isPopupVisible && !apiKey) {
+      setLocalError(
+        "API key is not set. Please set your OpenAI API key in the extension options."
+      );
+    } else {
+      setLocalError(null);
+    }
+  }, [isPopupVisible, apiKey]);
+
   // Calculate a position that's always visible within the viewport
   const calculateSafePosition = (rect: DOMRect) => {
+    // Store the original selection rect for later reference
+    selectedTextRef.current = rect;
+
     // Icon dimensions
     const iconSize = 40; // 10px padding + 10px width/height + 10px padding
 
@@ -46,7 +179,7 @@ const ContentScriptApp: React.FC = () => {
     const viewportHeight = window.innerHeight;
 
     // Initial position calculation (next to the selection)
-    // rect coordinates are already relative to the viewport, only add scrollX/Y when positioning fixed elements
+    // rect coordinates are already relative to the viewport, only add scrollX/Y when positioning absolute elements
     let x = rect.right + 10; // Position to the right of selection
     let y = rect.top; // Align with top of selection
 
@@ -82,11 +215,16 @@ const ContentScriptApp: React.FC = () => {
       top: rect.top,
       bottom: rect.bottom,
     });
-    console.log("### POSITION: Adjusted position:", { x, y });
 
-    // For fixed positioning with position:fixed, we actually DO NOT need to add scroll offsets
-    // since fixed positioning is relative to the viewport
-    return { x, y };
+    // For absolute positioning, add scroll offset to viewport coordinates
+    const absolute = {
+      x: x + window.scrollX,
+      y: y + window.scrollY,
+    };
+
+    console.log("### POSITION: Adjusted position:", absolute);
+
+    return absolute;
   };
 
   // Watch for selection changes
@@ -140,23 +278,29 @@ const ContentScriptApp: React.FC = () => {
   }, []);
 
   // Calculate a visible position for the popup
-  const getPopupPosition = () => {
+  const calculatePopupPosition = () => {
     // Popup dimensions (estimated)
-    const popupWidth = 300;
-    const popupHeight = 200;
+    const popupWidth = 500;
+    const popupHeight = 400;
 
     // Viewport dimensions
     const viewportWidth = window.innerWidth;
     const viewportHeight = window.innerHeight;
 
-    // For fixed positioning, position is already viewport-relative
-    // No need to subtract scroll position
-    const iconViewportX = position.x;
-    const iconViewportY = position.y;
+    // Get icon position relative to viewport
+    const iconViewportX = position.x - window.scrollX;
+    const iconViewportY = position.y - window.scrollY;
 
-    // Default position (centered below the icon)
-    let x = iconViewportX - popupWidth / 2 + 20; // Center it with 20px offset for icon
-    let y = iconViewportY + 40; // Below the icon
+    // Check if we're near the bottom of the viewport
+    const isNearBottom = iconViewportY > viewportHeight * 0.7;
+
+    // Default position (centered horizontally, but position based on available space)
+    let x = iconViewportX - popupWidth / 2 + 20;
+
+    // If near bottom, position above the icon, otherwise below
+    let y = isNearBottom
+      ? iconViewportY - popupHeight - 10 // Above icon
+      : iconViewportY + 40; // Below icon
 
     // Ensure popup is fully visible horizontally
     if (x + popupWidth > viewportWidth) {
@@ -166,19 +310,30 @@ const ContentScriptApp: React.FC = () => {
       x = 10;
     }
 
-    // Ensure popup is fully visible vertically
-    if (y + popupHeight > viewportHeight) {
-      // If not enough space below, try above
+    // Ensure popup is fully visible vertically (if possible)
+    if (y < 0) {
+      // Not enough space above, force show below
+      y = iconViewportY + 40;
+
+      // If still not visible, place at top of viewport
+      if (y + popupHeight > viewportHeight) {
+        y = 10;
+      }
+    } else if (y + popupHeight > viewportHeight) {
+      // Not enough space below, try above
       y = iconViewportY - popupHeight - 10;
 
-      // If still not visible, place at bottom of viewport
+      // If still not visible, place at top of viewport
       if (y < 0) {
-        y = viewportHeight - popupHeight - 10;
+        y = 10;
       }
     }
 
-    // For fixed positioning, return viewport coordinates directly
-    return { x, y };
+    // For absolute positioning, add scroll offset
+    return {
+      x: x + window.scrollX,
+      y: y + window.scrollY,
+    };
   };
 
   // Log every render
@@ -194,8 +349,13 @@ const ContentScriptApp: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
     console.log("### CLICK: Icon clicked");
+    cleanupState();
     setIsPopupVisible(true);
     setIsIconVisible(false);
+
+    // Calculate initial popup position
+    const initialPosition = calculatePopupPosition();
+    setPopupPosition(initialPosition);
   };
 
   const handleClosePopup = (e: React.MouseEvent) => {
@@ -203,17 +363,18 @@ const ContentScriptApp: React.FC = () => {
     e.stopPropagation();
     console.log("### POPUP: Closing");
     setIsPopupVisible(false);
+    cleanupState();
   };
 
-  // Get safe popup position
-  const popupPosition = getPopupPosition();
+  // Determine if there's an error to show
+  const errorMessage = localError || apiError;
 
   return (
     <div id="deconstructor-root">
       {isIconVisible && (
         <button
           id="deconstructor-icon"
-          className="fixed bg-blue-600 text-white rounded-full w-10 h-10 flex items-center justify-center cursor-pointer shadow-lg hover:bg-blue-700"
+          className="absolute bg-blue-600 text-white rounded-full w-10 h-10 flex items-center justify-center cursor-pointer shadow-lg hover:bg-blue-700 transition-colors"
           style={{
             left: `${position.x}px`,
             top: `${position.y}px`,
@@ -227,23 +388,40 @@ const ContentScriptApp: React.FC = () => {
 
       {isPopupVisible && (
         <div
+          ref={popupRef}
           id="deconstructor-popup"
-          className="fixed bg-white border border-gray-300 rounded shadow-lg p-4"
+          className="absolute bg-gray-900 border border-gray-700 rounded-lg shadow-xl cursor-default"
           style={{
             left: `${popupPosition.x}px`,
             top: `${popupPosition.y}px`,
-            width: "500px", // Increased width for the graph
+            width: "500px",
             maxHeight: "80vh",
             zIndex: 2147483646,
+            color: "white",
           }}
+          onMouseDown={handleDragStart}
         >
-          <div className="flex justify-between items-center mb-2">
-            <h3 className="font-bold">Word: {selectedWord}</h3>
+          <div className="flex justify-between items-center p-3 border-b border-gray-700 popup-drag-handle cursor-move">
+            <h3 className="font-bold text-lg select-none">{selectedWord}</h3>
             <button
-              className="text-gray-500 hover:text-gray-800"
+              className="text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded-md p-1 transition-colors w-8 h-8 flex items-center justify-center"
               onClick={handleClosePopup}
+              aria-label="Close"
             >
-              ✕
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+              </svg>
             </button>
           </div>
 
@@ -251,8 +429,26 @@ const ContentScriptApp: React.FC = () => {
             className="overflow-auto"
             style={{ maxHeight: "calc(80vh - 60px)" }}
           >
-            {/* Use Deconstructor component directly with the required props */}
-            <Deconstructor word={selectedWord} apiKey={apiKey} />
+            {errorMessage ? (
+              <div className="p-6 text-center">
+                <div className="text-red-500 mb-2">Error</div>
+                <p className="text-gray-300">{errorMessage}</p>
+                <p className="text-gray-400 mt-4">
+                  Please check your API key in the extension options.
+                </p>
+              </div>
+            ) : (
+              <Deconstructor word={selectedWord} apiKey={apiKey} />
+            )}
+
+            {isLoading && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-gray-900/70">
+                <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mb-4"></div>
+                <p className="text-gray-300">
+                  Deconstructing {selectedWord}...
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}

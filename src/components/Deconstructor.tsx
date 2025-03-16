@@ -14,92 +14,22 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { atom, useAtom } from "jotai";
-import { z } from "zod";
+import { WordOutput } from "@/utils/schema";
+import {
+  fetchWordDefinition,
+  defaultDefinition as apiDefaultDefinition,
+} from "@/utils/api";
 
 // Loading state atom
 const isLoadingAtom = atom(false);
+
+// Add errorAtom to share errors with ContentScriptApp
+const errorAtom = atom<string | null>(null);
 
 // Constants for layout
 const verticalSpacing = 100;
 const wordChunkPadding = 20;
 const originPadding = 40;
-
-// Word schema
-const wordSchema = z.object({
-  thought: z.string(),
-  parts: z.array(
-    z.object({
-      id: z.string(),
-      text: z.string(),
-      originalWord: z.string(),
-      origin: z.string(),
-      meaning: z.string(),
-    })
-  ),
-  combinations: z
-    .array(
-      z
-        .array(
-          z.object({
-            id: z.string(),
-            text: z.string(),
-            definition: z.string(),
-            sourceIds: z.array(z.string()),
-          })
-        )
-        .nonempty()
-    )
-    .nonempty(),
-});
-
-type Definition = z.infer<typeof wordSchema>;
-
-// Default definition for testing
-const defaultDefinition: Definition = {
-  thought: "",
-  parts: [
-    {
-      id: "de",
-      text: "de",
-      originalWord: "de-",
-      origin: "Latin",
-      meaning: "down, off, away",
-    },
-    {
-      id: "construc",
-      text: "construc",
-      originalWord: "construere",
-      origin: "Latin",
-      meaning: "to build, to pile up",
-    },
-    {
-      id: "tor",
-      text: "tor",
-      originalWord: "-or",
-      origin: "Latin",
-      meaning: "agent noun, one who does an action",
-    },
-  ],
-  combinations: [
-    [
-      {
-        id: "constructor",
-        text: "constructor",
-        definition: "one who constructs or builds",
-        sourceIds: ["construc", "tor"],
-      },
-    ],
-    [
-      {
-        id: "deconstructor",
-        text: "deconstructor",
-        definition:
-          "one who takes apart or analyzes the construction of something",
-        sourceIds: ["de", "constructor"],
-      },
-    ],
-  ],
-};
 
 // Node components
 const WordChunkNode = ({ data }: { data: { text: string } }) => {
@@ -110,9 +40,19 @@ const WordChunkNode = ({ data }: { data: { text: string } }) => {
         isLoading ? "opacity-0 blur-[20px]" : ""
       }`}
     >
-      <div className="text-5xl font-serif mb-1">{data.text}</div>
-      <div className="w-full h-3 border border-t-0 border-white" />
-      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      <div
+        className="flex flex-col items-center"
+        style={{ width: "min-content" }}
+      >
+        <div className="text-3xl font-serif mb-0.5">{data.text}</div>
+        <div className="h-1.5 border border-t-0 border-white w-full" />
+      </div>
+      <Handle
+        id="bottom"
+        type="source"
+        position={Position.Bottom}
+        style={{ opacity: 0 }}
+      />
     </div>
   );
 };
@@ -129,17 +69,31 @@ const OriginNode = ({
         isLoading ? "opacity-0 blur-[20px]" : ""
       }`}
     >
-      <div className="px-4 py-2 rounded-lg bg-gray-800 border border-gray-700/50 min-w-fit max-w-[180px]">
+      <div className="px-2 py-1.5 rounded-md bg-gray-800 border border-gray-700/50 min-w-fit max-w-[150px]">
         <div className="flex flex-col items-start">
-          <p className="text-lg font-serif mb-1 whitespace-nowrap">
+          <p className="text-sm font-serif mb-0.5 whitespace-nowrap">
             {data.originalWord}
           </p>
-          <p className="text-xs text-gray-400 w-full">{data.origin}</p>
-          <p className="text-xs text-gray-300 w-full">{data.meaning}</p>
+          <p className="text-xs text-gray-400 w-full leading-tight">
+            {data.origin}
+          </p>
+          <p className="text-xs text-gray-300 w-full leading-tight">
+            {data.meaning}
+          </p>
         </div>
       </div>
-      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
-      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
+      <Handle
+        id="top"
+        type="target"
+        position={Position.Top}
+        style={{ opacity: 0 }}
+      />
+      <Handle
+        id="bottom"
+        type="source"
+        position={Position.Bottom}
+        style={{ opacity: 0 }}
+      />
     </div>
   );
 };
@@ -156,15 +110,22 @@ const CombinedNode = ({
         isLoading ? "opacity-0 blur-[20px]" : ""
       }`}
     >
-      <div className="px-4 py-2 rounded-lg bg-gray-800 border border-gray-700/50 min-w-fit max-w-[250px]">
+      <div className="px-2 py-1.5 rounded-md bg-gray-800 border border-gray-700/50 min-w-fit max-w-[200px]">
         <div className="flex flex-col items-start">
-          <p className="text-xl font-serif mb-1 whitespace-nowrap">
+          <p className="text-base font-serif mb-0.5 whitespace-nowrap">
             {data.text}
           </p>
-          <p className="text-sm text-gray-300 w-full">{data.definition}</p>
+          <p className="text-xs text-gray-300 w-full leading-tight">
+            {data.definition}
+          </p>
         </div>
       </div>
-      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
+      <Handle
+        id="top"
+        type="target"
+        position={Position.Top}
+        style={{ opacity: 0 }}
+      />
     </div>
   );
 };
@@ -180,17 +141,20 @@ const nodeTypes = {
 function getLayoutedElements(nodes: Node[], edges: Edge[]) {
   const newNodes: Node[] = [];
 
+  // Increase vertical spacing to prevent overlap
+  const verticalPadding = 100; // Increased from 65
   let nextY = 0;
 
-  // Set up spacing for word chunks
+  // Set up spacing for word chunks with minimal horizontal padding
+  const horizontalPadding = 2; // Reduced from 5
   let totalWordChunkWidth = 0;
   nodes.forEach((node) => {
     if (node.type === "wordChunk") {
-      totalWordChunkWidth += (node.width ?? 100) + wordChunkPadding;
+      totalWordChunkWidth += (node.width ?? 100) + horizontalPadding;
     }
   });
 
-  // Position word chunks
+  // Position word chunks - very tight horizontal spacing
   let lastWordChunkX = 0;
   nodes.forEach((node) => {
     if (node.type === "wordChunk") {
@@ -201,17 +165,21 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]) {
           y: nextY,
         },
       });
-      lastWordChunkX += (node.width ?? 100) + wordChunkPadding;
+      lastWordChunkX += (node.width ?? 100) + horizontalPadding;
     }
   });
 
-  nextY += verticalSpacing;
+  nextY += verticalPadding;
 
-  // Position origins
+  // Add more space before origins
+  nextY += 20;
+
+  // Position origins with minimal padding
+  const originHorizontalPadding = 8; // Reduced from 15
   let totalOriginWidth = 0;
   nodes.forEach((node) => {
     if (node.type === "origin") {
-      totalOriginWidth += (node.width ?? 150) + originPadding;
+      totalOriginWidth += (node.width ?? 150) + originHorizontalPadding;
     }
   });
 
@@ -225,11 +193,14 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]) {
           y: nextY,
         },
       });
-      lastOriginX += (node.width ?? 150) + originPadding;
+      lastOriginX += (node.width ?? 150) + originHorizontalPadding;
     }
   });
 
-  nextY += verticalSpacing;
+  nextY += verticalPadding;
+
+  // Add more space before combinations
+  nextY += 20;
 
   // Position combinations by layer
   const combinationsByY = new Map<number, Node[]>();
@@ -243,13 +214,14 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]) {
     }
   });
 
-  // Layout each layer of combinations
+  // Layout each layer of combinations with minimal spacing
+  const combinedHorizontalPadding = 8; // Reduced from 15
   const sortedLayers = Array.from(combinationsByY.keys()).sort((a, b) => a - b);
   sortedLayers.forEach((layer) => {
     const layerNodes = combinationsByY.get(layer)!;
     let totalWidth = 0;
     layerNodes.forEach((node) => {
-      totalWidth += (node.width ?? 200) + originPadding;
+      totalWidth += (node.width ?? 200) + combinedHorizontalPadding;
     });
 
     let lastX = 0;
@@ -261,33 +233,51 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]) {
           y: nextY,
         },
       });
-      lastX += (node.width ?? 200) + originPadding;
+      lastX += (node.width ?? 200) + combinedHorizontalPadding;
     });
-    nextY += verticalSpacing;
+    nextY += verticalPadding;
+
+    // Add extra space between combination layers
+    nextY += 20;
   });
 
   return { nodes: newNodes, edges };
 }
 
-// Function to create initial nodes from definition
-function createInitialNodes(definition: Definition) {
-  const initialNodes: Node[] = [];
-  const initialEdges: Edge[] = [];
+// Function to create initial nodes from a definition
+const createInitialNodes = (word: string, definition: WordOutput) => {
+  if (!definition) return { nodes: [], edges: [] };
+
+  let nodes: Node[] = [];
+  let edges: Edge[] = [];
+
+  // Safeguard against empty definition parts
+  if (!definition.parts || definition.parts.length === 0) {
+    // Create a fallback node for words with no etymology data
+    nodes.push({
+      id: "no-data",
+      type: "wordChunk",
+      position: { x: 0, y: 0 },
+      data: { text: "No etymological data available" },
+      width: 300,
+    });
+    return { nodes, edges };
+  }
 
   // Add word parts and their origins
   definition.parts.forEach((part) => {
     // Word chunk node
-    initialNodes.push({
+    nodes.push({
       id: part.id,
       type: "wordChunk",
       position: { x: 0, y: 0 },
       data: { text: part.text },
-      width: 100,
+      width: 70,
     });
 
     // Origin node
     const originId = `origin-${part.id}`;
-    initialNodes.push({
+    nodes.push({
       id: originId,
       type: "origin",
       position: { x: 0, y: 0 },
@@ -296,128 +286,75 @@ function createInitialNodes(definition: Definition) {
         origin: part.origin,
         meaning: part.meaning,
       },
-      width: 150,
+      width: 110,
     });
 
-    // Connect word part to origin
-    initialEdges.push({
+    // Connect word part to origin with explicit handles
+    edges.push({
       id: `edge-${part.id}-${originId}`,
       source: part.id,
       target: originId,
+      sourceHandle: "bottom",
+      targetHandle: "top",
       type: "straight",
       style: { stroke: "#4B5563", strokeWidth: 1 },
       animated: true,
     });
   });
 
-  // Add combinations layer by layer
-  definition.combinations.forEach((layer, layerIndex) => {
-    const y = (layerIndex + 2) * verticalSpacing;
+  // Only process combinations if they exist
+  if (definition.combinations && definition.combinations.length > 0) {
+    // Add combinations layer by layer
+    definition.combinations.forEach((layer, layerIndex) => {
+      if (!layer || layer.length === 0) return;
 
-    layer.forEach((combination) => {
-      // Add combination node
-      initialNodes.push({
-        id: combination.id,
-        type: "combined",
-        position: { x: 0, y },
-        data: {
-          text: combination.text,
-          definition: combination.definition,
-        },
-        width: 200,
-      });
+      const y = (layerIndex + 2) * verticalSpacing;
 
-      // Add edges from all sources
-      combination.sourceIds.forEach((sourceId) => {
-        // If source is a word part, connect from its origin node
-        const isPart = definition.parts.find((p) => p.id === sourceId);
-        const actualSourceId = isPart ? `origin-${sourceId}` : sourceId;
-
-        initialEdges.push({
-          id: `edge-${actualSourceId}-${combination.id}`,
-          source: actualSourceId,
-          target: combination.id,
-          type: "straight",
-          style: { stroke: "#4B5563", strokeWidth: 1 },
-          animated: true,
+      layer.forEach((combination) => {
+        // Add combination node
+        nodes.push({
+          id: combination.id,
+          type: "combined",
+          position: { x: 0, y },
+          data: {
+            text: combination.text,
+            definition: combination.definition,
+          },
+          width: 160,
         });
+
+        // Add edges from all sources
+        if (combination.sourceIds && combination.sourceIds.length > 0) {
+          combination.sourceIds.forEach((sourceId) => {
+            if (!sourceId) return;
+
+            // If source is a word part, connect from its origin node
+            const isPart = definition.parts.find((p) => p.id === sourceId);
+            const actualSourceId = isPart ? `origin-${sourceId}` : sourceId;
+
+            // Check if source node exists
+            const sourceExists = nodes.some(
+              (node) => node.id === actualSourceId
+            );
+            if (!sourceExists) return;
+
+            edges.push({
+              id: `edge-${actualSourceId}-${combination.id}`,
+              source: actualSourceId,
+              target: combination.id,
+              sourceHandle: "bottom",
+              targetHandle: "top",
+              type: "straight",
+              style: { stroke: "#4B5563", strokeWidth: 1 },
+              animated: true,
+            });
+          });
+        }
       });
     });
-  });
-
-  return { initialNodes, initialEdges };
-}
-
-// API function to get word definition
-const fetchWordDefinition = async (
-  word: string,
-  apiKey: string
-): Promise<Definition> => {
-  try {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4",
-        messages: [
-          {
-            role: "system",
-            content: `Analyze the word provided by the user and break it down into its etymological parts. 
-            Return a JSON object strictly following this format:
-            {
-              "thought": "Your reasoning process (short)",
-              "parts": [
-                {
-                  "id": "unique_id",
-                  "text": "text_fragment",
-                  "originalWord": "original_word_or_root",
-                  "origin": "language_of_origin",
-                  "meaning": "meaning_in_origin_language"
-                }
-              ],
-              "combinations": [
-                [
-                  {
-                    "id": "unique_id",
-                    "text": "combined_text",
-                    "definition": "definition_of_combination",
-                    "sourceIds": ["id_of_part_1", "id_of_part_2"]
-                  }
-                ]
-              ]
-            }
-            The "combinations" array should contain arrays of objects, with each sub-array representing a layer of word building.`,
-          },
-          {
-            role: "user",
-            content: `Analyze the word: ${word}`,
-          },
-        ],
-        temperature: 0.7,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error?.message || "Failed to analyze word");
-    }
-
-    // Extract JSON from response
-    const content = data.choices[0].message.content;
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    const jsonContent = jsonMatch ? jsonMatch[0] : content;
-
-    // Parse and validate with schema
-    const result = JSON.parse(jsonContent);
-    return wordSchema.parse(result);
-  } catch (error) {
-    console.error("Error fetching word definition:", error);
-    return defaultDefinition;
   }
+
+  return { nodes, edges };
 };
 
 interface DeconstructorProps {
@@ -427,30 +364,47 @@ interface DeconstructorProps {
 
 const Deconstructor: React.FC<DeconstructorProps> = ({ word, apiKey }) => {
   const [isLoading, setIsLoading] = useAtom(isLoadingAtom);
-  const [definition, setDefinition] = useState<Definition>(defaultDefinition);
+  const [error, setError] = useAtom(errorAtom);
+  const [definition, setDefinition] = useState<WordOutput | null>(null);
   const { fitView } = useReactFlow();
+  const [retryCount, setRetryCount] = useState(0);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchData = async () => {
-      if (word && apiKey) {
+    if (!word) return;
+
+    async function fetchData() {
+      try {
         setIsLoading(true);
-        try {
-          const data = await fetchWordDefinition(word, apiKey);
-          setDefinition(data);
-        } catch (error) {
-          console.error("Error analyzing word:", error);
-        } finally {
-          setIsLoading(false);
-        }
+        setErrorMessage(null);
+        setError(null);
+
+        const data = await fetchWordDefinition(word, apiKey, retryCount);
+        setDefinition(data);
+      } catch (err) {
+        console.error("Error fetching word definition:", err);
+        setErrorMessage(
+          `Failed to analyze the word. Please try again or check your API key.`
+        );
+        setError(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        setIsLoading(false);
       }
-    };
+    }
 
     fetchData();
-  }, [word, apiKey]);
+  }, [word, apiKey, setError, retryCount]);
 
-  const { initialNodes, initialEdges } = useMemo(
-    () => createInitialNodes(definition),
-    [definition]
+  // Use fallback to default only if no error occurred
+  const effectiveDefinition =
+    definition || (!error ? apiDefaultDefinition : null);
+
+  const { nodes: initialNodes, edges: initialEdges } = useMemo(
+    () =>
+      effectiveDefinition
+        ? createInitialNodes(word, effectiveDefinition)
+        : { nodes: [], edges: [] },
+    [effectiveDefinition, word]
   );
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -463,32 +417,52 @@ const Deconstructor: React.FC<DeconstructorProps> = ({ word, apiKey }) => {
   }, [initialNodes, initialEdges]);
 
   useEffect(() => {
-    if (nodesInitialized) {
+    if (nodesInitialized && nodes.length > 0) {
       const { nodes: layoutedNodes, edges: layoutedEdges } =
         getLayoutedElements(nodes, edges);
       setNodes(layoutedNodes);
       setEdges(layoutedEdges);
 
       setTimeout(() => {
-        fitView({ duration: 500, padding: 0.2 });
-      }, 100);
+        fitView({ duration: 300, padding: 0.3, includeHiddenNodes: false });
+      }, 50);
     }
-  }, [nodesInitialized, fitView]);
+  }, [nodesInitialized, fitView, nodes.length]);
 
   return (
-    <div className="h-[350px] bg-gray-900 text-gray-100">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        nodeTypes={nodeTypes}
-        className="bg-gray-900"
-        proOptions={{ hideAttribution: true }}
-        fitView
-      >
-        <Background color="#333" />
-      </ReactFlow>
+    <div className="h-[450px] bg-gray-900 text-gray-100">
+      {effectiveDefinition && nodes.length > 0 ? (
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          nodeTypes={nodeTypes}
+          className="bg-gray-900"
+          proOptions={{ hideAttribution: true }}
+          fitView
+          fitViewOptions={{ padding: 0.35, minZoom: 0.3, maxZoom: 1.5 }}
+          minZoom={0.2}
+          maxZoom={3}
+          defaultViewport={{ x: 0, y: 0, zoom: 0.4 }}
+        >
+          <Background color="#333" />
+        </ReactFlow>
+      ) : !isLoading && error ? (
+        <div className="flex flex-col items-center justify-center h-full p-6 text-center">
+          <p className="text-red-400 mb-4">Could not analyze this word.</p>
+          <p className="text-gray-300 mb-6">{error.replace("Error: ", "")}</p>
+          <button
+            onClick={() => {
+              setRetryCount((prevCount) => prevCount + 1);
+            }}
+            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors"
+          >
+            Try Again
+          </button>
+        </div>
+      ) : null}
+
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center bg-gray-900/70">
           <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white"></div>

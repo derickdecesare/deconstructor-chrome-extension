@@ -47,8 +47,8 @@ const PopupApp: React.FC = () => {
 
       <div className="mb-4">
         <p className="text-sm mb-2">
-          Highlight a word on any webpage, right-click, and select "Deconstruct"
-          to analyze its etymology.
+          Highlight a word on any webpage, and select the "Deconstruct" icon to
+          analyze its etymology.
         </p>
       </div>
 
