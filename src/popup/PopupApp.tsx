@@ -1,16 +1,29 @@
 import React, { useState, useEffect } from "react";
 
+// Available models with their display names
+const AVAILABLE_MODELS = [
+  { id: "gpt-4o", name: "GPT-4o (Default)" },
+  { id: "gpt-4o-mini", name: "GPT-4o Mini (Faster)" },
+  { id: "gpt-4.5-preview", name: "GPT-4.5 Preview" },
+  // { id: "o1", name: "O1 (Reasoning)" },
+  // { id: "o3-mini", name: "O3 Mini (Reasoning)" },
+];
+
 const PopupApp: React.FC = () => {
   const [apiKey, setApiKey] = useState("");
+  const [selectedModel, setSelectedModel] = useState("gpt-4o");
   const [isSaved, setIsSaved] = useState(false);
 
   useEffect(() => {
     console.log("PopupApp: Loading API key from storage");
-    // Load API key from storage
-    chrome.storage.local.get(["openAIKey"], (result) => {
+    // Load API key and model from storage
+    chrome.storage.local.get(["openAIKey", "selectedModel"], (result) => {
       console.log("PopupApp: API key loaded:", result);
       if (result.openAIKey) {
         setApiKey(result.openAIKey);
+      }
+      if (result.selectedModel) {
+        setSelectedModel(result.selectedModel);
       }
     });
   }, []);
@@ -20,25 +33,31 @@ const PopupApp: React.FC = () => {
       "PopupApp: Saving API key:",
       apiKey ? "Non-empty key" : "Empty key"
     );
-    // Save API key to storage
-    chrome.storage.local.set({ openAIKey: apiKey }, () => {
-      console.log("PopupApp: API key saved to storage");
+    // Save API key and model to storage
+    chrome.storage.local.set(
+      { openAIKey: apiKey, selectedModel: selectedModel },
+      () => {
+        console.log("PopupApp: API key saved to storage");
 
-      // Notify content scripts about key update
-      try {
-        chrome.runtime.sendMessage({ action: "apiKeysUpdated" }, (response) => {
-          console.log("PopupApp: Message sent, response:", response);
-        });
-      } catch (error) {
-        console.error("PopupApp: Error sending message:", error);
+        // Notify content scripts about key update
+        try {
+          chrome.runtime.sendMessage(
+            { action: "apiKeysUpdated" },
+            (response) => {
+              console.log("PopupApp: Message sent, response:", response);
+            }
+          );
+        } catch (error) {
+          console.error("PopupApp: Error sending message:", error);
+        }
+
+        setIsSaved(true);
+        setTimeout(() => {
+          console.log("PopupApp: Resetting saved state");
+          setIsSaved(false);
+        }, 2000);
       }
-
-      setIsSaved(true);
-      setTimeout(() => {
-        console.log("PopupApp: Resetting saved state");
-        setIsSaved(false);
-      }, 2000);
-    });
+    );
   };
 
   return (
@@ -69,11 +88,33 @@ const PopupApp: React.FC = () => {
         </p>
       </div>
 
+      <div className="mb-4">
+        <label htmlFor="modelSelect" className="block text-sm font-medium mb-1">
+          AI Model
+        </label>
+        <select
+          id="modelSelect"
+          value={selectedModel}
+          onChange={(e) => setSelectedModel(e.target.value)}
+          className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
+          {AVAILABLE_MODELS.map((model) => (
+            <option key={model.id} value={model.id}>
+              {model.name}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-gray-400 mt-1">
+          Select the model to use for word analysis. GPT-4o is recommended for
+          most cases.
+        </p>
+      </div>
+
       <button
         onClick={handleSave}
         className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md transition-colors"
       >
-        {isSaved ? "Saved!" : "Save API Key"}
+        {isSaved ? "Saved!" : "Save Settings"}
       </button>
 
       <div className="mt-4 text-xs text-gray-400 text-center">

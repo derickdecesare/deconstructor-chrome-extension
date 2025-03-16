@@ -55,7 +55,8 @@ export const defaultDefinition: WordOutput = {
 export async function fetchWordDefinition(
   word: string,
   apiKey: string,
-  retryCount: number = 0
+  retryCount: number = 0,
+  modelName: string = "gpt-4o"
 ): Promise<WordOutput> {
   const maxAttempts = 3;
   let attempts = 0;
@@ -88,7 +89,11 @@ export async function fetchWordDefinition(
 
       // Choose model based on attempt number
       //   const modelName = attempts === 1 ? "gpt-4o-mini" : "gpt-4o";
-      const modelName = "gpt-4o"; // just default to 4o
+      //   const modelName = "gpt-4o-mini";
+      //   const modelName = "gpt-4o"; // just default to 4o
+      //   const modelName = "gpt-4.5-preview";
+      // const modelName = "o1"
+      // const modelName = "o3-mini"
 
       const result = await generateObject({
         model: createOpenAI({ apiKey })(modelName),
@@ -129,6 +134,8 @@ IMPORTANT: Ensure that:
 5. All sourceIds reference existing parts or previous combinations`,
         prompt,
       });
+
+      console.log("raw result", result);
 
       // Validate the result
       const definition = result.object;

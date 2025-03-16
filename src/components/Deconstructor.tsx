@@ -20,6 +20,19 @@ import {
   defaultDefinition as apiDefaultDefinition,
 } from "@/utils/api";
 
+// Simple warning suppression for React Flow edge errors
+const originalConsoleWarn = console.warn;
+console.warn = function (...args) {
+  // Skip React Flow edge warnings
+  if (
+    typeof args[0] === "string" &&
+    args[0].includes("[React Flow]: Couldn't create edge for source handle")
+  ) {
+    return;
+  }
+  originalConsoleWarn.apply(console, args);
+};
+
 // Loading state atom
 const isLoadingAtom = atom(false);
 
@@ -40,19 +53,14 @@ const WordChunkNode = ({ data }: { data: { text: string } }) => {
         isLoading ? "opacity-0 blur-[20px]" : ""
       }`}
     >
-      <div
-        className="flex flex-col items-center"
-        style={{ width: "min-content" }}
-      >
-        <div className="text-3xl font-serif mb-0.5">{data.text}</div>
-        <div className="h-1.5 border border-t-0 border-white w-full" />
+      <div style={{ display: "inline-block", textAlign: "center" }}>
+        <div className="text-5xl font-serif mb-1">{data.text}</div>
+        <div
+          className="h-3 border border-t-0 border-white"
+          style={{ width: "100%" }}
+        />
       </div>
-      <Handle
-        id="bottom"
-        type="source"
-        position={Position.Bottom}
-        style={{ opacity: 0 }}
-      />
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
     </div>
   );
 };
@@ -82,18 +90,8 @@ const OriginNode = ({
           </p>
         </div>
       </div>
-      <Handle
-        id="top"
-        type="target"
-        position={Position.Top}
-        style={{ opacity: 0 }}
-      />
-      <Handle
-        id="bottom"
-        type="source"
-        position={Position.Bottom}
-        style={{ opacity: 0 }}
-      />
+      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
     </div>
   );
 };
@@ -120,12 +118,8 @@ const CombinedNode = ({
           </p>
         </div>
       </div>
-      <Handle
-        id="top"
-        type="target"
-        position={Position.Top}
-        style={{ opacity: 0 }}
-      />
+      <Handle type="target" position={Position.Top} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Bottom} style={{ opacity: 0 }} />
     </div>
   );
 };
@@ -142,11 +136,21 @@ function getLayoutedElements(nodes: Node[], edges: Edge[]) {
   const newNodes: Node[] = [];
 
   // Increase vertical spacing to prevent overlap
-  const verticalPadding = 100; // Increased from 65
+  const verticalPadding = 100;
   let nextY = 0;
 
+  // Position original word at the top
+  const originalWordNode = nodes.find((node) => node.id === "original-word");
+  if (originalWordNode) {
+    newNodes.push({
+      ...originalWordNode,
+      position: { x: 0, y: nextY },
+    });
+    nextY += verticalPadding - 40; // Less spacing after the original word
+  }
+
   // Set up spacing for word chunks with minimal horizontal padding
-  const horizontalPadding = 2; // Reduced from 5
+  const horizontalPadding = 20;
   let totalWordChunkWidth = 0;
   nodes.forEach((node) => {
     if (node.type === "wordChunk") {
@@ -272,7 +276,7 @@ const createInitialNodes = (word: string, definition: WordOutput) => {
       type: "wordChunk",
       position: { x: 0, y: 0 },
       data: { text: part.text },
-      width: 70,
+      width: Math.max(part.text.length * 25, 100),
     });
 
     // Origin node
@@ -294,8 +298,6 @@ const createInitialNodes = (word: string, definition: WordOutput) => {
       id: `edge-${part.id}-${originId}`,
       source: part.id,
       target: originId,
-      sourceHandle: "bottom",
-      targetHandle: "top",
       type: "straight",
       style: { stroke: "#4B5563", strokeWidth: 1 },
       animated: true,
@@ -342,8 +344,6 @@ const createInitialNodes = (word: string, definition: WordOutput) => {
               id: `edge-${actualSourceId}-${combination.id}`,
               source: actualSourceId,
               target: combination.id,
-              sourceHandle: "bottom",
-              targetHandle: "top",
               type: "straight",
               style: { stroke: "#4B5563", strokeWidth: 1 },
               animated: true,
@@ -354,15 +354,28 @@ const createInitialNodes = (word: string, definition: WordOutput) => {
     });
   }
 
+  // Simple log of created nodes and edges
+  console.log(
+    `Created ${nodes.length} nodes and ${edges.length} edges for word: ${word}`
+  );
+
+  // console.log(`Nodes: ${JSON.stringify(nodes)}`);
+  // console.log(`Edges: ${JSON.stringify(edges)}`);
+
   return { nodes, edges };
 };
 
 interface DeconstructorProps {
   word: string;
   apiKey: string;
+  model?: string;
 }
 
-const Deconstructor: React.FC<DeconstructorProps> = ({ word, apiKey }) => {
+const Deconstructor: React.FC<DeconstructorProps> = ({
+  word,
+  apiKey,
+  model = "gpt-4o",
+}) => {
   const [isLoading, setIsLoading] = useAtom(isLoadingAtom);
   const [error, setError] = useAtom(errorAtom);
   const [definition, setDefinition] = useState<WordOutput | null>(null);
@@ -379,7 +392,8 @@ const Deconstructor: React.FC<DeconstructorProps> = ({ word, apiKey }) => {
         setErrorMessage(null);
         setError(null);
 
-        const data = await fetchWordDefinition(word, apiKey, retryCount);
+        const data = await fetchWordDefinition(word, apiKey, retryCount, model);
+        console.log(`API response for "${word}":`, data);
         setDefinition(data);
       } catch (err) {
         console.error("Error fetching word definition:", err);
@@ -393,7 +407,7 @@ const Deconstructor: React.FC<DeconstructorProps> = ({ word, apiKey }) => {
     }
 
     fetchData();
-  }, [word, apiKey, setError, retryCount]);
+  }, [word, apiKey, setError, retryCount, model]);
 
   // Use fallback to default only if no error occurred
   const effectiveDefinition =
@@ -418,6 +432,7 @@ const Deconstructor: React.FC<DeconstructorProps> = ({ word, apiKey }) => {
 
   useEffect(() => {
     if (nodesInitialized && nodes.length > 0) {
+      console.log(`Applying layout to ${nodes.length} nodes`);
       const { nodes: layoutedNodes, edges: layoutedEdges } =
         getLayoutedElements(nodes, edges);
       setNodes(layoutedNodes);

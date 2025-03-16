@@ -42,13 +42,14 @@ const injectGlobalStyles = () => {
 };
 
 const ContentScriptApp: React.FC = () => {
-  console.log("### INIT: Content script initializing");
+  // Initialize component
   const [isIconVisible, setIsIconVisible] = useState(false);
   const [isPopupVisible, setIsPopupVisible] = useState(false);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [popupPosition, setPopupPosition] = useState({ x: 0, y: 0 });
   const [selectedWord, setSelectedWord] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [selectedModel, setSelectedModel] = useState("gpt-4o");
   const [localError, setLocalError] = useState<string | null>(null);
   const [isLoading] = useAtom(isLoadingAtom); // Use the same atom as Deconstructor
   const [apiError, setApiError] = useAtom(errorAtom); // Use atom for API errors
@@ -78,7 +79,6 @@ const ContentScriptApp: React.FC = () => {
         popupRef.current &&
         !popupRef.current.contains(event.target as Node)
       ) {
-        console.log("### POPUP: Clicked outside, closing");
         setIsPopupVisible(false);
         cleanupState();
       }
@@ -135,16 +135,20 @@ const ContentScriptApp: React.FC = () => {
 
   // Load API key
   useEffect(() => {
-    chrome.storage.local.get(["openAIKey"], (result) => {
-      console.log("### API: Key loaded:", result);
+    chrome.storage.local.get(["openAIKey", "selectedModel"], (result) => {
       setApiKey(result.openAIKey || "");
+      setSelectedModel(result.selectedModel || "gpt-4o");
     });
 
     // Add listener for changes to storage
     const handleStorageChange = (changes: any, areaName: string) => {
-      if (areaName === "local" && changes.openAIKey) {
-        console.log("### API: Key updated:", changes.openAIKey.newValue);
-        setApiKey(changes.openAIKey.newValue || "");
+      if (areaName === "local") {
+        if (changes.openAIKey) {
+          setApiKey(changes.openAIKey.newValue || "");
+        }
+        if (changes.selectedModel) {
+          setSelectedModel(changes.selectedModel.newValue || "gpt-4o");
+        }
       }
     };
 
@@ -180,17 +184,17 @@ const ContentScriptApp: React.FC = () => {
 
     // Initial position calculation (next to the selection)
     // rect coordinates are already relative to the viewport, only add scrollX/Y when positioning absolute elements
-    let x = rect.right + 10; // Position to the right of selection
+    let x = rect.left - iconSize - 10; // Position to the left of selection
     let y = rect.top; // Align with top of selection
 
     // Ensure icon is fully visible horizontally
-    if (x + iconSize > viewportWidth) {
-      // If not enough space on the right, try left side
-      x = rect.left - iconSize;
+    if (x < 0) {
+      // If not enough space on the left, try right side
+      x = rect.right + 10;
 
-      // If still not visible, place it at the end of viewport with some margin
-      if (x < 0) {
-        x = viewportWidth - iconSize - 10;
+      // If still not visible, place it at the start of viewport with some margin
+      if (x + iconSize > viewportWidth) {
+        x = 10;
       }
     }
 
@@ -203,54 +207,37 @@ const ContentScriptApp: React.FC = () => {
       y = viewportHeight - iconSize - 10;
     }
 
-    console.log("### POSITION: Viewport:", {
-      width: viewportWidth,
-      height: viewportHeight,
-      scrollX: window.scrollX,
-      scrollY: window.scrollY,
-    });
-    console.log("### POSITION: Original rect:", {
-      left: rect.left,
-      right: rect.right,
-      top: rect.top,
-      bottom: rect.bottom,
-    });
-
     // For absolute positioning, add scroll offset to viewport coordinates
     const absolute = {
       x: x + window.scrollX,
       y: y + window.scrollY,
     };
 
-    console.log("### POSITION: Adjusted position:", absolute);
-
     return absolute;
   };
 
   // Watch for selection changes
   useEffect(() => {
-    console.log("### SELECTION: Setting up listener");
-
     const handleSelectionChange = () => {
       try {
         const selection = window.getSelection();
-        if (!selection) return;
+        if (!selection || selection.isCollapsed) {
+          setIsIconVisible(false);
+          return;
+        }
 
         const text = selection.toString().trim();
         if (!text) {
-          console.log("### SELECTION: Empty, hiding icon");
           setIsIconVisible(false);
           return;
         }
 
         // Only proceed if it's a single word
         if (text.includes(" ")) {
-          console.log("### SELECTION: Multiple words, hiding icon");
           setIsIconVisible(false);
           return;
         }
 
-        console.log("### SELECTION: Single word detected:", text);
         setSelectedWord(text);
 
         // Get the position for the icon
@@ -263,10 +250,9 @@ const ContentScriptApp: React.FC = () => {
           setPosition(safePosition);
 
           setIsIconVisible(true);
-          console.log("### ICON: Should be visible now");
         }
       } catch (error) {
-        console.error("### ERROR:", error);
+        console.error("Error handling selection:", error);
       }
     };
 
@@ -337,18 +323,18 @@ const ContentScriptApp: React.FC = () => {
   };
 
   // Log every render
-  console.log("### RENDER:", {
-    isIconVisible,
-    isPopupVisible,
-    selectedWord,
-    position,
-    apiKey: apiKey ? "Set" : "Not set",
-  });
+  // console.log("### RENDER:", {
+  //   isIconVisible,
+  //   isPopupVisible,
+  //   selectedWord,
+  //   position,
+  //   apiKey: apiKey ? "Set" : "Not set",
+  // });
 
   const handleIconClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    console.log("### CLICK: Icon clicked");
+
     cleanupState();
     setIsPopupVisible(true);
     setIsIconVisible(false);
@@ -361,7 +347,7 @@ const ContentScriptApp: React.FC = () => {
   const handleClosePopup = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    console.log("### POPUP: Closing");
+
     setIsPopupVisible(false);
     cleanupState();
   };
@@ -398,6 +384,7 @@ const ContentScriptApp: React.FC = () => {
             maxHeight: "80vh",
             zIndex: 2147483646,
             color: "white",
+            overflow: "hidden",
           }}
           onMouseDown={handleDragStart}
         >
@@ -427,7 +414,11 @@ const ContentScriptApp: React.FC = () => {
 
           <div
             className="overflow-auto"
-            style={{ maxHeight: "calc(80vh - 60px)" }}
+            style={{
+              maxHeight: "calc(80vh - 60px)",
+              borderBottomLeftRadius: "0.5rem",
+              borderBottomRightRadius: "0.5rem",
+            }}
           >
             {errorMessage ? (
               <div className="p-6 text-center">
@@ -438,7 +429,11 @@ const ContentScriptApp: React.FC = () => {
                 </p>
               </div>
             ) : (
-              <Deconstructor word={selectedWord} apiKey={apiKey} />
+              <Deconstructor
+                word={selectedWord}
+                apiKey={apiKey}
+                model={selectedModel}
+              />
             )}
 
             {isLoading && (
