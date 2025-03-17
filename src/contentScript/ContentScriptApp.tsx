@@ -28,6 +28,8 @@ const injectGlobalStyles = () => {
   const style = document.createElement("style");
   style.id = styleId;
   style.textContent = `
+    /* Only apply styles to elements within our extension containers */
+    #deconstructor-root,
     #deconstructor-root * {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       box-sizing: border-box;
@@ -41,6 +43,23 @@ const injectGlobalStyles = () => {
     /* Set a smaller initial font size for better spacing */
     #deconstructor-popup .react-flow {
       font-size: 85%;
+    }
+    
+    /* Ensure our elements are absolutely positioned and don't affect page layout */
+    #deconstructor-root {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 0;
+      height: 0;
+      overflow: visible;
+      pointer-events: none;
+      z-index: 2147483640;
+    }
+    
+    /* But ensure children get pointer events */
+    #deconstructor-root > * {
+      pointer-events: auto;
     }
   `;
 
@@ -521,15 +540,22 @@ const ContentScriptApp: React.FC = () => {
       {isIconVisible && (
         <button
           id="deconstructor-icon"
-          className="absolute bg-blue-600 text-white rounded-full w-10 h-10 flex items-center justify-center cursor-pointer shadow-lg hover:bg-blue-700 transition-colors"
+          className="absolute bg-gray-900 text-white rounded-full w-10 h-10 flex items-center justify-center cursor-pointer shadow-xl hover:bg-gray-800 transition-colors border border-gray-700"
           style={{
             left: `${position.x}px`,
             top: `${position.y}px`,
             zIndex: 2147483647,
+            boxShadow:
+              "0 4px 12px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.1)",
           }}
           onClick={handleIconClick}
         >
-          🔍
+          <span className="font-bold text-lg">
+            d
+            <span className="text-xs align-text-top ml-0.5 text-blue-400">
+              .
+            </span>
+          </span>
         </button>
       )}
 
