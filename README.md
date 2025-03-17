@@ -61,6 +61,38 @@ This extension is based on the [Word Deconstructor](https://github.com/hyusap/de
 - GitHub: https://github.com/hyusap/deconstructor
 - Live site: https://deconstructor.vercel.app
 
+## Known Issues
+
+- **Layout Shift**: When the extension is first loaded on a page, it may cause a slight layout shift in some websites. This occurs during extension initialization and persists until the extension is disabled and the page is reloaded. If you'd like to help fix this issue:
+  1. The issue seems to be related to the initial style injection when the extension loads
+  2. Previous attempts to fix this have focused on CSS isolation and style scoping
+  3. The challenge is to prevent the extension's styles from affecting the page layout while maintaining full extension functionality
+  4. Pull requests addressing this issue are welcome!
+
+## To Do
+
+- Fix layout shift issue that occurs on extension initialization
+- Add support for customizing language of explanations (e.g., Spanish)
+- Expand model support to include Anthropic, Google, and other providers
+- Add keyboard shortcut customization
+- Add a proper extension icon
+- Add language customization for explanations (e.g., Spanish)
+
+## Contributing
+
+Contributions are welcome! Some specific areas where help is needed:
+
+1. **Layout Shift Bug**: Help fix the layout shift that occurs when the extension initializes. This requires careful handling of CSS injection and style isolation.
+2. **Language Support**: Add support for multiple languages in word explanations.
+3. **Model Integration**: Help integrate additional AI models.
+
+To contribute:
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
+
 ## License
 
 ISC
