@@ -135,7 +135,7 @@ IMPORTANT: Ensure that:
         prompt,
       });
 
-      console.log("raw result", result);
+      //   console.log("raw result", result);
 
       // Validate the result
       const definition = result.object;

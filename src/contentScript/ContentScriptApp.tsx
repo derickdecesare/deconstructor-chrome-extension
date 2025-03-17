@@ -8,6 +8,12 @@ const isLoadingAtom = atom(false);
 // Create an error atom to communicate errors from Deconstructor
 const errorAtom = atom<string | null>(null);
 
+// Settings atom for extension preferences
+const settingsAtom = atom({
+  enableKeyboardShortcut: true,
+  enableHoverIcon: true,
+});
+
 interface ApiKeys {
   openAIKey: string;
 }
@@ -55,6 +61,7 @@ const ContentScriptApp: React.FC = () => {
   const [apiError, setApiError] = useAtom(errorAtom); // Use atom for API errors
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [settings, setSettings] = useAtom(settingsAtom); // User settings
   const popupRef = useRef<HTMLDivElement>(null);
   const selectedTextRef = useRef<DOMRect | null>(null);
 
@@ -68,6 +75,154 @@ const ContentScriptApp: React.FC = () => {
     setIsDragging(false);
     setLocalError(null);
     setApiError(null);
+  };
+
+  // Calculate a position that's always visible within the viewport
+  const calculateSafePosition = (rect: DOMRect) => {
+    // Store the original selection rect for later reference
+    selectedTextRef.current = rect;
+
+    // Icon dimensions
+    const iconSize = 40; // 10px padding + 10px width/height + 10px padding
+
+    // Viewport dimensions
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    // Initial position calculation (next to the selection)
+    // rect coordinates are already relative to the viewport, only add scrollX/Y when positioning absolute elements
+    let x = rect.left - iconSize - 10; // Position to the left of selection
+    let y = rect.top; // Align with top of selection
+
+    // Ensure icon is fully visible horizontally
+    if (x < 0) {
+      // If not enough space on the left, try right side
+      x = rect.right + 10;
+
+      // If still not visible, place it at the start of viewport with some margin
+      if (x + iconSize > viewportWidth) {
+        x = 10;
+      }
+    }
+
+    // Ensure icon is fully visible vertically
+    if (y < 0) {
+      // If above viewport, place below selection
+      y = rect.bottom + 10;
+    } else if (y + iconSize > viewportHeight) {
+      // If below viewport, place it at the top of viewport with some margin
+      y = viewportHeight - iconSize - 10;
+    }
+
+    // For absolute positioning, add scroll offset to viewport coordinates
+    const absolute = {
+      x: x + window.scrollX,
+      y: y + window.scrollY,
+    };
+
+    return absolute;
+  };
+
+  // Calculate a visible position for the popup
+  const calculatePopupPosition = () => {
+    // Popup dimensions (estimated)
+    const popupWidth = 500;
+    const popupHeight = 400;
+
+    // Viewport dimensions
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    // Get icon position relative to viewport
+    const iconViewportX = position.x - window.scrollX;
+    const iconViewportY = position.y - window.scrollY;
+
+    // Check if we're near the bottom of the viewport
+    const isNearBottom = iconViewportY > viewportHeight * 0.7;
+
+    // Default position (centered horizontally, but position based on available space)
+    let x = iconViewportX - popupWidth / 2 + 20;
+
+    // If near bottom, position above the icon, otherwise below
+    let y = isNearBottom
+      ? iconViewportY - popupHeight - 10 // Above icon
+      : iconViewportY + 40; // Below icon
+
+    // Ensure popup is fully visible horizontally
+    if (x + popupWidth > viewportWidth) {
+      x = viewportWidth - popupWidth - 10;
+    }
+    if (x < 0) {
+      x = 10;
+    }
+
+    // Ensure popup is fully visible vertically (if possible)
+    if (y < 0) {
+      // Not enough space above, force show below
+      y = iconViewportY + 40;
+
+      // If still not visible, place at top of viewport
+      if (y + popupHeight > viewportHeight) {
+        y = 10;
+      }
+    } else if (y + popupHeight > viewportHeight) {
+      // Not enough space below, try above
+      y = iconViewportY - popupHeight - 10;
+
+      // If still not visible, place at top of viewport
+      if (y < 0) {
+        y = 10;
+      }
+    }
+
+    // For absolute positioning, add scroll offset
+    return {
+      x: x + window.scrollX,
+      y: y + window.scrollY,
+    };
+  };
+
+  // Process the current selection and show popup if valid
+  const processSelection = () => {
+    // console.log("Processing selection");
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) {
+      // console.log("No valid selection found");
+      return false;
+    }
+
+    const text = selection.toString().trim();
+    // console.log("Selected text:", text);
+
+    if (!text || text.includes(" ")) {
+      // console.log("Text is empty or contains spaces");
+      return false;
+    }
+
+    setSelectedWord(text);
+    // console.log("Selected word set:", text);
+
+    // Get position for the popup
+    if (selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      const rect = range.getBoundingClientRect();
+
+      // Calculate popup position
+      const safePosition = calculateSafePosition(rect);
+      setPosition(safePosition);
+
+      const popupPos = calculatePopupPosition();
+      // console.log("Calculated popup position:", popupPos);
+      setPopupPosition(popupPos);
+
+      // Show popup
+      // console.log("Setting popup visible");
+      setIsPopupVisible(true);
+      return true;
+    }
+
+    // console.log("No valid range found in selection");
+    return false;
   };
 
   // Handle clicks outside the popup
@@ -170,56 +325,16 @@ const ContentScriptApp: React.FC = () => {
     }
   }, [isPopupVisible, apiKey]);
 
-  // Calculate a position that's always visible within the viewport
-  const calculateSafePosition = (rect: DOMRect) => {
-    // Store the original selection rect for later reference
-    selectedTextRef.current = rect;
-
-    // Icon dimensions
-    const iconSize = 40; // 10px padding + 10px width/height + 10px padding
-
-    // Viewport dimensions
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-
-    // Initial position calculation (next to the selection)
-    // rect coordinates are already relative to the viewport, only add scrollX/Y when positioning absolute elements
-    let x = rect.left - iconSize - 10; // Position to the left of selection
-    let y = rect.top; // Align with top of selection
-
-    // Ensure icon is fully visible horizontally
-    if (x < 0) {
-      // If not enough space on the left, try right side
-      x = rect.right + 10;
-
-      // If still not visible, place it at the start of viewport with some margin
-      if (x + iconSize > viewportWidth) {
-        x = 10;
-      }
-    }
-
-    // Ensure icon is fully visible vertically
-    if (y < 0) {
-      // If above viewport, place below selection
-      y = rect.bottom + 10;
-    } else if (y + iconSize > viewportHeight) {
-      // If below viewport, place it at the top of viewport with some margin
-      y = viewportHeight - iconSize - 10;
-    }
-
-    // For absolute positioning, add scroll offset to viewport coordinates
-    const absolute = {
-      x: x + window.scrollX,
-      y: y + window.scrollY,
-    };
-
-    return absolute;
-  };
-
   // Watch for selection changes
   useEffect(() => {
     const handleSelectionChange = () => {
       try {
+        // Only show icon if hover icon setting is enabled
+        if (!settings.enableHoverIcon) {
+          setIsIconVisible(false);
+          return;
+        }
+
         const selection = window.getSelection();
         if (!selection || selection.isCollapsed) {
           setIsIconVisible(false);
@@ -261,66 +376,7 @@ const ContentScriptApp: React.FC = () => {
     return () => {
       document.removeEventListener("selectionchange", handleSelectionChange);
     };
-  }, []);
-
-  // Calculate a visible position for the popup
-  const calculatePopupPosition = () => {
-    // Popup dimensions (estimated)
-    const popupWidth = 500;
-    const popupHeight = 400;
-
-    // Viewport dimensions
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-
-    // Get icon position relative to viewport
-    const iconViewportX = position.x - window.scrollX;
-    const iconViewportY = position.y - window.scrollY;
-
-    // Check if we're near the bottom of the viewport
-    const isNearBottom = iconViewportY > viewportHeight * 0.7;
-
-    // Default position (centered horizontally, but position based on available space)
-    let x = iconViewportX - popupWidth / 2 + 20;
-
-    // If near bottom, position above the icon, otherwise below
-    let y = isNearBottom
-      ? iconViewportY - popupHeight - 10 // Above icon
-      : iconViewportY + 40; // Below icon
-
-    // Ensure popup is fully visible horizontally
-    if (x + popupWidth > viewportWidth) {
-      x = viewportWidth - popupWidth - 10;
-    }
-    if (x < 0) {
-      x = 10;
-    }
-
-    // Ensure popup is fully visible vertically (if possible)
-    if (y < 0) {
-      // Not enough space above, force show below
-      y = iconViewportY + 40;
-
-      // If still not visible, place at top of viewport
-      if (y + popupHeight > viewportHeight) {
-        y = 10;
-      }
-    } else if (y + popupHeight > viewportHeight) {
-      // Not enough space below, try above
-      y = iconViewportY - popupHeight - 10;
-
-      // If still not visible, place at top of viewport
-      if (y < 0) {
-        y = 10;
-      }
-    }
-
-    // For absolute positioning, add scroll offset
-    return {
-      x: x + window.scrollX,
-      y: y + window.scrollY,
-    };
-  };
+  }, [settings.enableHoverIcon]);
 
   // Log every render
   // console.log("### RENDER:", {
@@ -354,6 +410,111 @@ const ContentScriptApp: React.FC = () => {
 
   // Determine if there's an error to show
   const errorMessage = localError || apiError;
+
+  // Add keyboard shortcut listener (Option + D)
+  useEffect(() => {
+    // console.log("Adding keyboard shortcut listener for Option+D");
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      // console.log("Removing keyboard shortcut listener");
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [settings.enableKeyboardShortcut]);
+
+  // Define key handler as a callback to avoid dependency issues
+  const handleKeyDown = React.useCallback(
+    (event: KeyboardEvent) => {
+      // console.log("Key pressed:", event.key, "Alt key:", event.altKey);
+
+      // Check if Option + D was pressed (includes the delta symbol ∂ for macOS Option+D)
+      if (
+        event.altKey &&
+        (event.key === "d" || event.key === "D" || event.key === "∂")
+      ) {
+        //   console.log(
+        //     "Option+D detected, keyboard shortcut enabled:",
+        //     settings.enableKeyboardShortcut
+        // );
+
+        // Only proceed if keyboard shortcuts are enabled
+        if (!settings.enableKeyboardShortcut) return;
+
+        event.preventDefault();
+
+        const selection = window.getSelection();
+        // console.log("Current selection:", selection?.toString());
+
+        const success = processSelection();
+        // console.log("Process selection result:", success);
+
+        if (success) {
+          setIsIconVisible(false); // Hide the icon when opening via keyboard
+
+          // Calculate initial popup position and set it
+          const initialPosition = calculatePopupPosition();
+          setPopupPosition(initialPosition);
+
+          // console.log("Setting popup position:", initialPosition);
+        }
+      }
+    },
+    [settings.enableKeyboardShortcut, processSelection]
+  );
+
+  // Load settings
+  useEffect(() => {
+    // console.log("Loading settings from storage");
+    chrome.storage.local.get(
+      ["enableKeyboardShortcut", "enableHoverIcon"],
+      (result) => {
+        // console.log("Settings loaded from storage:", result);
+        const newSettings = {
+          enableKeyboardShortcut:
+            result.enableKeyboardShortcut !== undefined
+              ? result.enableKeyboardShortcut
+              : true,
+          enableHoverIcon:
+            result.enableHoverIcon !== undefined
+              ? result.enableHoverIcon
+              : true,
+        };
+
+        // console.log("New settings:", newSettings);
+        setSettings(newSettings);
+      }
+    );
+
+    // Add listener for changes to settings
+    const handleStorageChange = (changes: any, areaName: string) => {
+      if (areaName === "local") {
+        // console.log("Storage changes detected:", changes);
+        const newSettings = { ...settings };
+        let hasChanges = false;
+
+        if (changes.enableKeyboardShortcut !== undefined) {
+          newSettings.enableKeyboardShortcut =
+            changes.enableKeyboardShortcut.newValue;
+          hasChanges = true;
+        }
+
+        if (changes.enableHoverIcon !== undefined) {
+          newSettings.enableHoverIcon = changes.enableHoverIcon.newValue;
+          hasChanges = true;
+        }
+
+        if (hasChanges) {
+          // console.log("Updating settings to:", newSettings);
+          setSettings(newSettings);
+        }
+      }
+    };
+
+    chrome.storage.onChanged.addListener(handleStorageChange);
+    return () => {
+      chrome.storage.onChanged.removeListener(handleStorageChange);
+    };
+  }, []);
 
   return (
     <div id="deconstructor-root">

@@ -354,10 +354,9 @@ const createInitialNodes = (word: string, definition: WordOutput) => {
     });
   }
 
-  // Simple log of created nodes and edges
-  console.log(
-    `Created ${nodes.length} nodes and ${edges.length} edges for word: ${word}`
-  );
+  // console.log(
+  //   `Created ${nodes.length} nodes and ${edges.length} edges for word: ${word}`
+  // );
 
   // console.log(`Nodes: ${JSON.stringify(nodes)}`);
   // console.log(`Edges: ${JSON.stringify(edges)}`);
@@ -393,7 +392,7 @@ const Deconstructor: React.FC<DeconstructorProps> = ({
         setError(null);
 
         const data = await fetchWordDefinition(word, apiKey, retryCount, model);
-        console.log(`API response for "${word}":`, data);
+        // console.log(`API response for "${word}":`, data);
         setDefinition(data);
       } catch (err) {
         console.error("Error fetching word definition:", err);
@@ -432,7 +431,7 @@ const Deconstructor: React.FC<DeconstructorProps> = ({
 
   useEffect(() => {
     if (nodesInitialized && nodes.length > 0) {
-      console.log(`Applying layout to ${nodes.length} nodes`);
+      // console.log(`Applying layout to ${nodes.length} nodes`);
       const { nodes: layoutedNodes, edges: layoutedEdges } =
         getLayoutedElements(nodes, edges);
       setNodes(layoutedNodes);
