@@ -19,6 +19,6 @@
       "js": ["contentScript.js"]
     }
   ],
-  "permissions": ["storage"],
-  "host_permissions": ["<all_urls>"]
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": []
 }
